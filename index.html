@@ -184,7 +184,12 @@
       );
     }
 
-    window.addEventListener("load", requestLocation);
+    // Request location as soon as the HTML document is ready, without waiting for all page resources.
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", requestLocation, { once: true });
+    } else {
+      requestLocation();
+    }
   </script>
 </body>
 </html>
