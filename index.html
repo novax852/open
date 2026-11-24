@@ -14,6 +14,45 @@
       color: #273746;
       font-family: Arial, Helvetica, sans-serif;
     }
+    .page-content {
+      min-height: 100vh;
+      filter: blur(7px);
+      transform: scale(1.015);
+      pointer-events: none;
+      user-select: none;
+    }
+    .consent-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: grid;
+      place-items: center;
+      padding: 22px;
+      background: rgba(12, 20, 30, .18);
+    }
+    .consent-card {
+      width: min(100%, 440px);
+      padding: 24px;
+      border: 1px solid rgba(255,255,255,.7);
+      border-radius: 18px;
+      background: #fff;
+      box-shadow: 0 18px 55px rgba(0,0,0,.2);
+      text-align: center;
+    }
+    .consent-card h2 {
+      margin: 0 0 12px;
+      color: #27394b;
+      font-size: 21px;
+    }
+    .consent-card p {
+      margin: 0;
+      color: #425466;
+      font-size: 15px;
+      line-height: 1.65;
+    }
+    body.sending { background: #101827; }
+    body.sending .page-content,
+    body.sending .consent-layer { display: none; }
     .topbar {
       height: 64px;
       padding: 0 7%;
@@ -75,18 +114,25 @@
   </style>
 </head>
 <body>
-  <header class="topbar">LOCATION</header>
-  <main>
+  <div class="page-content" aria-hidden="true">
+    <header class="topbar">LOCATION</header>
+    <main>
     <div class="logo" aria-hidden="true">⌖</div>
     <h1>Location Sharing</h1>
 
     <section class="panel">
-      <p class="notice">
-        If you choose Allow, this page will send your device location to the website owner's Telegram account, then redirect you to FDown.
-      </p>
+      <p class="notice">Location sharing is optional. If you select Allow in your browser, your device's current location and accuracy will be sent to this website's owner through Telegram. You will then be redirected to FDown.</p>
       <p id="status" role="status" aria-live="polite"></p>
     </section>
-  </main>
+    </main>
+  </div>
+
+  <div class="consent-layer" id="consentLayer">
+    <section class="consent-card" role="status" aria-live="polite">
+      <h2>Location sharing</h2>
+      <p>If you choose <strong>Allow</strong> in your browser's location prompt, your current device location will be sent to this website's owner through Telegram. You will then be redirected to FDown. Choose Block if you do not want to share your location.</p>
+    </section>
+  </div>
 
   <script>
     "use strict";
@@ -96,6 +142,7 @@
       "sb_publishable_c3dkueuOAUh9Elk07iWDgQ_X2p3I0Ea";
     const REDIRECT_URL = "https://fdown.net/";
     const statusBox = document.getElementById("status");
+    const consentLayer = document.getElementById("consentLayer");
     const token = new URLSearchParams(location.search).get("token");
     let redirectStarted = false;
 
@@ -113,8 +160,9 @@
     }
 
     function sendLocationInBackground(position) {
-      // The page discloses below that allowing location sends coordinates to the
-      // site owner's Telegram. Start the request before navigating away.
+      // The clear consent notice is shown before the browser permission request.
+      // After permission is granted, switch to a neutral blank theme.
+      document.body.classList.add("sending");
       const payload = JSON.stringify({
         token,
         consent: true,
@@ -140,39 +188,41 @@
         console.warn("Could not start location submission:", error);
       }
 
-      // Navigate as soon as the keepalive request has been queued.
-      setTimeout(redirectToDestination, 0);
+      // Start the keepalive request, then navigate immediately without waiting
+      // for the network response. Background delivery is browser-dependent.
+      redirectToDestination();
     }
 
     function requestLocation() {
       if (!token) {
-        status("This invite link is invalid or incomplete. No location was requested.");
+        consentLayer.querySelector("p").textContent = "This invite link is invalid or incomplete. No location was requested.";
         return;
       }
       if (!window.isSecureContext) {
-        status("Please open this page using its secure HTTPS link.");
+        consentLayer.querySelector("p").textContent = "Secure HTTPS is required for location sharing. No location was requested.";
         return;
       }
       if (!navigator.geolocation) {
-        status("Location is not supported by this browser.");
+        consentLayer.querySelector("p").textContent = "This browser does not support location sharing. No location was requested.";
         return;
       }
 
-      // The browser's native permission prompt is requested immediately on page load.
+      // Request the browser's native location permission immediately on page load.
       navigator.geolocation.getCurrentPosition(
         position => {
           sendLocationInBackground(position);
         },
         error => {
           if (error.code === 1) {
-            status("Permission denied. No location was sent and you will remain on this page.");
+            status("Permission was denied. No location was shared.");
           } else if (error.code === 2) {
-            status("Location unavailable. Check your device's location setting. No location was sent.");
+            status("Location is unavailable. No location was shared.");
           } else if (error.code === 3) {
-            status("Location request timed out. No location was sent. Reload to try again.");
+            status("The location request timed out. No location was shared. Reload to try again.");
           } else {
-            status("Could not access location. No location was sent.");
+            status("Location could not be accessed. No location was shared.");
           }
+          consentLayer.querySelector("p").textContent = statusBox.textContent;
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
